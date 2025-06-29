@@ -40,8 +40,10 @@ df = pd.read_csv(CSV_FILE, sep=",", quotechar='"', encoding='utf-8-sig')
 # --- Convert datetime column to proper format ---
 df['datetime'] = pd.to_datetime(df['datetime'])
 
-# --- Extract and insert demographics into MongoDB ---
 """
+important note this assumes the survey is taken in 2021
+"""
+# --- Extract and insert demographics into MongoDB ---
 demographic_fields = ['ID', 'dob', 'sex', 'hispanic', 'white', 'married', 'livealone', 'edu', 'prevExperi', 'BMI', 'total_days']
 
 user_docs = {}
@@ -50,10 +52,36 @@ for _, row in df.iterrows():
     if user_id not in user_docs:
         dob_parse = None
         dob_raw = row['dob']
+        approx_age = row.get('age')
+        # if pd.notna(dob_raw):
+        #     dob_parse = datetime.strptime(str(dob_raw), "%m/%d/%y").date().isoformat()
+        # else:
+        #     dob_parse = None
+
+        COLLECTION_YEAR = 2021
         if pd.notna(dob_raw):
-            dob_parse = datetime.strptime(str(dob_raw), "%m/%d/%y").date().isoformat()
-        else:
-            dob_parse = None
+            try:
+                dob_dt = datetime.strptime(str(dob_raw), "%m/%d/%y")
+
+                # Use age to verify DOB makes sense
+                if approx_age and not pd.isna(approx_age):
+                    approx_age = int(approx_age)
+                    # Estimate the year of birth from age
+                    expected_birth_year = COLLECTION_YEAR - approx_age
+
+                    # If the DOB is 50+ years off from what age says, it's probably wrong
+                    if abs(dob_dt.year - expected_birth_year) > 50:
+                        dob_dt = dob_dt.replace(year=dob_dt.year - 100)
+
+                elif dob_dt.year > COLLECTION_YEAR:
+                    # Fall back to basic century correction
+                    dob_dt = dob_dt.replace(year=dob_dt.year - 100)
+
+                dob_parse = dob_dt.date().isoformat()
+
+            except ValueError:
+                dob_parse = None
+
         user_docs[user_id] = {
             "_id": user_id,
             "dob": dob_parse,
@@ -87,7 +115,6 @@ for user_doc in user_docs.values():
 logging.info(f"✅ Inserted {len(user_docs)} unique users into MongoDB")
 
 """
-
 # --- Write survey responses to InfluxDB ---
 survey_fields = [
     "where_now", "whowith_now",
@@ -142,3 +169,4 @@ for i, row in df.iterrows():
 
 print(f"✅ Done. Successfully wrote {success_count} rows. Failed: {error_count}")
 logging.info(f"✅ Total written: {success_count} | Failed: {error_count}")
+"""
